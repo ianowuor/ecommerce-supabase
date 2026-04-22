@@ -1,8 +1,8 @@
-import { getAccessToken, getRefreshToken, setTokens } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
-
+/** * TYPES 
+ * Updated IDs from 'number' to 'string' to support Supabase UUIDs
+ */
 export type LoginPayload = { email: string; password: string };
 export type RegisterPayload = {
   full_name: string;
@@ -12,179 +12,185 @@ export type RegisterPayload = {
   address?: string;
 };
 
-type TokenResponse = {
-  access_token: string;
-  refresh_token?: string;
-  token_type: string;
-};
-
 export type Product = {
-  id: number;
+  id: string; 
   name: string;
   description?: string;
-  price: string;
+  price: number; // Supabase numeric maps to JS number
   image_url?: string;
 };
 
 export type CartItem = {
-  id: number;
-  product_id: number;
+  id: string;
+  user_id: string;
+  product_id: string;
   quantity: number;
-  product?: Product;
-};
-
-export type OrderItem = {
-  id: number;
-  product_id: number;
-  quantity: number;
-  price: number;
   product?: Product;
 };
 
 export type Order = {
-  id: number;
-  user_id: number;
-  total_amount: number; // Updated to match Postman output
+  id: string;
+  user_id: string;
+  total_amount: number;
   status: string;
+  shipping_address: string;
   created_at: string;
-  // ... other fields
 };
 
-export type OrderSummary = {
-  id: number;
-  total_amount: number; // Updated to match Postman output
-  status: string;
-  created_at: string;
-};
+export type OrderSummary = Pick<Order, 'id' | 'total_amount' | 'status' | 'created_at'>;
 
 export type OrderCreate = {
   shipping_address: string;
-  payment_method?: string;
+  total_amount: number; // Calculated on frontend or via RPC
 };
 
-async function request<T>(
-  path: string,
-  init: RequestInit = {},
-  useAuth = false,
-): Promise<T> {
-  // Ensure path starts with /
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const url = `${API_BASE_URL}${normalizedPath}`;
-
-  const headers = new Headers(init.headers);
-  headers.set("Content-Type", "application/json");
-
-  if (useAuth) {
-    const token = getAccessToken();
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-  }
-
-  try {
-    const response = await fetch(url, { ...init, headers });
-
-    if (!response.ok) {
-      // Handle Token Expiry (401) - Potential for Auto-Refresh here
-      if (response.status === 401 && useAuth) {
-         console.warn("Unauthorized request. Token might be expired.");
-      }
-
-      let errorMessage = `HTTP ${response.status}`;
-      try {
-        const errorData = await response.json();
-        errorMessage = errorData.detail || errorData.message || errorMessage;
-      } catch (e) {
-        errorMessage = response.statusText || errorMessage;
-      }
-      throw new Error(errorMessage);
-    }
-
-    // For 204 No Content responses
-    if (response.status === 204) return {} as T;
-
-    return (await response.json()) as T;
-  } catch (error) {
-    if (error instanceof TypeError && error.message === "Failed to fetch") {
-      console.error("Network Error: Check if FastAPI is running at", url);
-      throw new Error("Could not connect to the server. Please check your connection.");
-    }
-    throw error;
-  }
-}
-
+/**
+ * AUTH FUNCTIONS
+ */
 export async function register(payload: RegisterPayload): Promise<void> {
-  await request("/auth/register", {
-    method: "POST",
-    body: JSON.stringify(payload),
+  // 1. Sign up user in Supabase Auth
+  const { data: authData, error: authError } = await supabase.auth.signUp({
+    email: payload.email,
+    password: payload.password,
   });
+
+  if (authError) throw authError;
+
+  // 2. Insert into your custom public.users table
+  if (authData.user) {
+    const { error: profileError } = await supabase.from("users").insert({
+      id: authData.user.id,
+      full_name: payload.full_name,
+      phone: payload.phone,
+      address: payload.address,
+    });
+    if (profileError) throw profileError;
+  }
 }
 
 export async function login(payload: LoginPayload): Promise<void> {
-  const tokenData = await request<TokenResponse>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify(payload),
+  const { error } = await supabase.auth.signInWithPassword({
+    email: payload.email,
+    password: payload.password,
   });
-  setTokens(tokenData.access_token, tokenData.refresh_token || "");
+  if (error) throw error;
 }
 
-export async function refreshAccessToken(): Promise<void> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) throw new Error("Missing refresh token");
-
-  const tokenData = await request<TokenResponse>("/auth/refresh", {
-    method: "POST",
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
-  setTokens(tokenData.access_token, tokenData.refresh_token || "");
+export async function logout(): Promise<void> {
+  await supabase.auth.signOut();
 }
 
+/**
+ * PRODUCT FUNCTIONS
+ */
 export async function getProducts(): Promise<Product[]> {
-  return request<Product[]>("/products");
+  const { data, error } = await supabase
+    .from("products")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data as Product[];
 }
 
-export async function getCartItems(): Promise<CartItem[]> {
-  return request<CartItem[]>("/cart/items", {}, true);
+/**
+ * CART FUNCTIONS
+ */
+export async function getCartItems() {
+  const { data, error } = await supabase
+    .from('cart_items')
+    .select(`
+      id,
+      user_id,
+      quantity,
+      product_id,
+      product:products (*)
+    `)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data as CartItem[];
 }
 
-export async function addToCart(productId: number, quantity: number): Promise<CartItem> {
-  return request<CartItem>(
-    "/cart/items",
-    {
-      method: "POST",
-      body: JSON.stringify({ product_id: productId, quantity }),
-    },
-    true,
-  );
+export async function addToCart(productId: string, quantity: number = 1) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Authentication required");
+
+  // This mirrors your FastAPI logic: If exists, increment; else, insert.
+  // We use .upsert() with 'onConflict' to match your uq_cart_user_product constraint.
+  
+  // First, let's get the existing quantity if it exists
+  const { data: existingItem } = await supabase
+    .from('cart_items')
+    .select('quantity')
+    .eq('user_id', user.id)
+    .eq('product_id', productId)
+    .single();
+
+  const newQuantity = (existingItem?.quantity || 0) + quantity;
+
+  const { data, error } = await supabase
+    .from('cart_items')
+    .upsert({ 
+      user_id: user.id, 
+      product_id: productId, 
+      quantity: newQuantity 
+    }, { onConflict: 'user_id,product_id' })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
+/**
+ * ORDER FUNCTIONS
+ */
 export async function createOrder(orderData: OrderCreate): Promise<Order> {
-  // Your FastAPI expects POST /orders/
-  return request<Order>(
-    "/orders/",
-    {
-      method: "POST",
-      body: JSON.stringify(orderData),
-    },
-    true,
-  );
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Authentication required");
+
+  const { data, error } = await supabase
+    .from("orders")
+    .insert({
+      user_id: user.id,
+      total_amount: orderData.total_amount,
+      shipping_address: orderData.shipping_address,
+      status: "pending",
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as Order;
 }
 
 export async function getOrders(): Promise<OrderSummary[]> {
-  return request<OrderSummary[]>("/orders/", {}, true);
+  const { data, error } = await supabase
+    .from("orders")
+    .select("id, total_amount, status, created_at")
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data as OrderSummary[];
 }
 
-export async function getOrder(orderId: number): Promise<Order> {
-  return request<Order>(`/orders/${orderId}`, {}, true);
+export async function getOrder(orderId: string): Promise<Order> {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single();
+
+  if (error) throw error;
+  return data as Order;
 }
 
-export async function cancelOrder(orderId: number): Promise<{ message: string }> {
-  return request<{ message: string }>(
-    `/orders/${orderId}/status`,
-    {
-      method: "PUT",
-      body: JSON.stringify({ status: "cancelled" }),
-    },
-    true,
-  );
+export async function cancelOrder(orderId: string): Promise<void> {
+  const { error } = await supabase
+    .from("orders")
+    .update({ status: "cancelled" })
+    .eq("id", orderId);
+
+  if (error) throw error;
 }

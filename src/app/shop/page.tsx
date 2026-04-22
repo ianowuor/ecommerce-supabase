@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import Breadcrumb from "@/components/common/Breadcrumbs";
 import ProductCard from "@/components/ecommerce/ProductCard";
+// Note: api.ts now handles Supabase logic internally
 import { type Product, addToCart, getProducts } from "@/lib/api";
 
 export default function ShopPage() {
@@ -17,6 +18,8 @@ export default function ShopPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+
+    // Using the refactored getProducts from api.ts
     getProducts()
       .then((data) => {
         if (!cancelled) setProducts(data);
@@ -27,6 +30,7 @@ export default function ShopPage() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+
     return () => {
       cancelled = true;
     };
@@ -37,7 +41,7 @@ export default function ShopPage() {
       <Breadcrumb items={[{ label: "Shop", href: "/shop" }]} />
 
       <div className="flex flex-col lg:flex-row gap-[30px] mt-10">
-        
+
         {/* Left Sidebar: Filters */}
         <aside className="w-full lg:w-[270px] flex flex-col gap-10">
           {/* Category Filter */}
@@ -68,12 +72,12 @@ export default function ShopPage() {
           <div>
             <h3 className="text-[20px] font-medium mb-6">Rating</h3>
             <div className="flex flex-col gap-4">
-               {[5, 4, 3, 2, 1].map((star) => (
-                 <label key={star} className="flex items-center gap-3 cursor-pointer group">
-                   <input type="checkbox" className="w-5 h-5 accent-[#DB4444]" />
-                   <span className="text-[16px] group-hover:text-[#DB4444]">{star} Stars</span>
-                 </label>
-               ))}
+              {[5, 4, 3, 2, 1].map((star) => (
+                <label key={star} className="flex items-center gap-3 cursor-pointer group">
+                  <input type="checkbox" className="w-5 h-5 accent-[#DB4444]" />
+                  <span className="text-[16px] group-hover:text-[#DB4444]">{star} Stars</span>
+                </label>
+              ))}
             </div>
           </div>
         </aside>
@@ -81,7 +85,8 @@ export default function ShopPage() {
         {/* Right Content: Product Grid */}
         <div className="flex-grow">
           <div className="flex justify-between items-center mb-10">
-            <h2 className="text-[20px] font-semibold">Showing 1–12 of 36 results</h2>
+            {/* You might want to dynamically update '36' with products.length later */}
+            <h2 className="text-[20px] font-semibold">Showing 1–{products.length} of {products.length} results</h2>
             <select className="border border-black/10 rounded-[4px] p-2 outline-none text-[16px]">
               <option>Default sorting</option>
               <option>Price: Low to High</option>
@@ -97,25 +102,26 @@ export default function ShopPage() {
           ) : (
             <>
               {cartAddError && <div className="py-4 text-center text-red-600">{cartAddError}</div>}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-[30px] gap-y-[60px]">
-              {products.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  id={product.id}
-                  name={product.name}
-                  price={Number(product.price)}
-                  image={product.image_url ?? "/images/placeholder.png"}
-                  onAddToCart={async () => {
-                    setCartAddError(null);
-                    try {
-                      await addToCart(product.id, 1);
-                    } catch (e) {
-                      setCartAddError((e as Error).message ?? "Failed to add to cart");
-                    }
-                  }}
-                />
-              ))}
-            </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-[30px] gap-y-[60px]">
+                {products.map((product) => (
+                  <ProductCard
+                    key={product.id}
+                    id={product.id}
+                    name={product.name}
+                    price={Number(product.price)}
+                    image={product.image_url ?? "/images/placeholder.png"}
+                    onAddToCart={async () => {
+                      setCartAddError(null);
+                      try {
+                        await addToCart(product.id, 1);
+                        alert("Added to cart!");
+                      } catch (e) {
+                        setCartAddError((e as Error).message ?? "Failed to add to cart");
+                      }
+                    }}
+                  />
+                ))}
+              </div>
             </>
           )}
 
