@@ -120,10 +120,12 @@ export default function CartPage() {
             <div className="flex items-center gap-5">
                <div className="relative w-[54px] h-[54px]">
                   <Image
-                    src={item.product?.image_url ?? "/images/placeholder.png"}
+                    src={item.product?.image_url || "/images/placeholder.png"}
                     alt={item.product?.name ?? "Product"}
                     fill
+                    sizes="100px"
                     className="object-contain"
+                    unoptimized={process.env.NODE_ENV === 'development'}
                   />
                   <button 
                     onClick={() => removeFromCart(item.product_id)}

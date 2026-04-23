@@ -1,6 +1,6 @@
 -- 1. EXTENSIONS
 create extension if not exists "pg_cron";
-create extension if not exists "pg_net"; -- REQUIRED for webhooks/http requests
+create extension if not exists "pg_net"; 
 
 -- 2. TABLES
 create table public.users (
@@ -20,8 +20,8 @@ create table public.products (
   shopify_id text unique,
   shopify_variant_id text unique,
   shopify_inventory_item_id text,
-  is_featured boolean default false, -- Added this to fix cron error
-  expiry_date timestamptz,            -- Added this to fix cron error
+  is_featured boolean default false,
+  expiry_date timestamptz, -- Changed to timestamptz for consistency
   created_at timestamptz default now()
 );
 
@@ -30,81 +30,94 @@ create table public.orders (
   user_id uuid references public.users(id) on delete cascade,
   total_amount numeric(10, 2) not null,
   status text default 'pending',
-  shipping_address text not null,
+  shipping_address text not null, -- FIXED: Removed the stray 'w'
+  created_at timestamptz default now() -- FIXED: Ensured preceding comma exists
+);
+
+create table public.order_items (
+  id uuid default gen_random_uuid() primary key,
+  order_id uuid references public.orders(id) on delete cascade not null,
+  product_id uuid references public.products(id) on delete set null,
+  quantity integer not null default 1,
+  price numeric(10, 2) not null, -- Stores the price at the time of purchase
   created_at timestamptz default now()
 );
 
--- 1. Create the cart_items table
+-- Enable RLS
+alter table public.order_items enable row level security;
+
+-- Allow users to view their own order items
+create policy "Users can view their own order items" 
+  on public.order_items for select 
+  using (
+    exists (
+      select 1 from public.orders 
+      where orders.id = order_items.order_id 
+      and orders.user_id = auth.uid()
+    )
+  );
+
 create table public.cart_items (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references public.users(id) on delete cascade not null,
   product_id uuid references public.products(id) on delete cascade not null,
   quantity integer not null default 1 check (quantity >= 1),
   created_at timestamptz default now(),
-  
-  -- This mirrors your SQLAlchemy UniqueConstraint("user_id", "product_id")
   unique(user_id, product_id)
 );
 
--- 2. Enable RLS
+-- 3. SECURITY & RLS
 alter table public.cart_items enable row level security;
+alter table public.products enable row level security;
 
--- 3. Policies
--- Users can only see their own cart items
-create policy "Users can view their own cart" 
-  on public.cart_items for select 
-  using (auth.uid() = user_id);
+create policy "Users can view their own cart" on public.cart_items for select using (auth.uid() = user_id);
+create policy "Users can insert their own cart" on public.cart_items for insert with check (auth.uid() = user_id);
+create policy "Users can update their own cart" on public.cart_items for update using (auth.uid() = user_id);
+create policy "Users can delete their own cart" on public.cart_items for delete using (auth.uid() = user_id);
+create policy "Anyone can view products" on public.products for select using (true);
 
--- Users can only insert their own cart items
-create policy "Users can insert their own cart" 
-  on public.cart_items for insert 
-  with check (auth.uid() = user_id);
-
--- Users can only update their own cart items
-create policy "Users can update their own cart" 
-  on public.cart_items for update 
-  using (auth.uid() = user_id);
-
--- Users can only delete their own cart items
-create policy "Users can delete their own cart" 
-  on public.cart_items for delete 
-  using (auth.uid() = user_id);
-
--- 3. STORAGE (Storage setup is usually done via API, but if using SQL, ensure bucket exists)
--- Note: Insert into storage.buckets usually needs to happen after storage extension is ready
+-- 4. STORAGE
 insert into storage.buckets (id, name, public) 
 values ('product-images', 'product-images', true)
 on conflict (id) do nothing;
 
--- 4. TRIGGERS (Fixed syntax)
+-- 5. FUNCTIONS & TRIGGERS
+-- Note: triggers must call a FUNCTION. We wrap the http_request in a function.
 
--- Fix for on_product_created
+create or replace function public.handle_shopify_sync() 
+returns trigger as $$
+begin
+  perform net.http_post(
+    url := 'http://host.docker.internal:54321/functions/v1/shopify-sync',
+    headers := '{"Content-Type":"application/json"}'::jsonb,
+    body := json_build_object('record', row_to_json(NEW))::jsonb
+  );
+  return NEW;
+end;
+$$ language plpgsql;
+
 create trigger on_product_created
   after insert on public.products
-  for each row
-  execute function supabase_functions.http_request(
-    'http://host.docker.internal:54321/functions/v1/shopify-sync',
-    'POST',
-    '{"Content-Type":"application/json"}',
-    '{}'
-  );
+  for each row execute function public.handle_shopify_sync();
 
--- Already correct on_order_created
+create or replace function public.handle_order_email() 
+returns trigger as $$
+begin
+  perform net.http_post(
+    url := 'http://host.docker.internal:54321/functions/v1/send-order-email',
+    headers := '{"Content-Type":"application/json"}'::jsonb,
+    body := json_build_object('record', row_to_json(NEW))::jsonb
+  );
+  return NEW;
+end;
+$$ language plpgsql;
+
 create trigger on_order_created
   after insert on public.orders
-  for each row
-  execute function supabase_functions.http_request(
-    'http://host.docker.internal:54321/functions/v1/send-order-email',
-    'POST',
-    '{"Content-Type":"application/json"}',
-    '{}'
-  );
-
--- 5. RLS POLICIES
-alter table public.products enable row level security;
-create policy "Anyone can view products" on public.products for select using (true);
+  for each row execute function public.handle_order_email();
 
 -- 6. CRON JOBS
+-- Wrap logic in $$ to avoid escaping issues
 select cron.schedule(
   'cleanup-old-orders',
   '0 0 * * *',

@@ -23,7 +23,8 @@ export default function OrderDetailsPage() {
 
       try {
         setLoading(true);
-        const orderData = await getOrder(parseInt(orderId));
+        // REMOVE parseInt() - UUIDs are strings
+        const orderData = await getOrder(orderId); 
         setOrder(orderData);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load order");
@@ -42,7 +43,7 @@ export default function OrderDetailsPage() {
 
     try {
       setCancelling(true);
-      await cancelOrder(parseInt(orderId));
+      await cancelOrder(orderId);
       // Update the order status
       if (order) {
         setOrder({ ...order, status: "cancelled" });
@@ -216,7 +217,7 @@ export default function OrderDetailsPage() {
               Payment Method
             </h2>
             <p className="text-gray-700 capitalize">
-              {order.payment_method.replace('_', ' ')}
+              {order.payment_method?.replace('_', ' ') ?? "Not specified"}
             </p>
           </div>
         </div>

@@ -23,7 +23,8 @@ export default function OrderSuccessPage() {
 
     const loadOrder = async () => {
       try {
-        const orderData = await getOrder(parseInt(orderId));
+        // FIX: Remove parseInt because orderId is a UUID string
+        const orderData = await getOrder(orderId); 
         setOrder(orderData);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load order");
@@ -93,9 +94,12 @@ export default function OrderSuccessPage() {
               <span className="font-semibold text-lg">${Number(order.total_amount).toFixed(2)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Payment Method:</span>
-              <span className="capitalize">{order.payment_method.replace('_', ' ')}</span>
-            </div>
+  <span className="text-gray-600">Payment Method:</span>
+  <span className="capitalize">
+    {/* FIX: Add optional chaining and fallback */}
+    {order.payment_method?.replace('_', ' ') ?? "Not specified"}
+  </span>
+</div>
           </div>
 
           {/* Shipping Address */}

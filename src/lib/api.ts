@@ -28,13 +28,25 @@ export type CartItem = {
   product?: Product;
 };
 
+export type OrderItem = {
+  id: string;
+  quantity: number;
+  price: number;
+  product?: {
+    name: string;
+    image_url?: string;
+  };
+};
+
 export type Order = {
   id: string;
   user_id: string;
   total_amount: number;
   status: string;
   shipping_address: string;
+  payment_method: string;
   created_at: string;
+  order_items?: OrderItem[]; // Add this line
 };
 
 export type OrderSummary = Pick<Order, 'id' | 'total_amount' | 'status' | 'created_at'>;
@@ -146,23 +158,19 @@ export async function addToCart(productId: string, quantity: number = 1) {
 /**
  * ORDER FUNCTIONS
  */
-export async function createOrder(orderData: OrderCreate): Promise<Order> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Authentication required");
-
-  const { data, error } = await supabase
-    .from("orders")
-    .insert({
-      user_id: user.id,
-      total_amount: orderData.total_amount,
-      shipping_address: orderData.shipping_address,
-      status: "pending",
-    })
-    .select()
-    .single();
+export async function createOrder(orderData: { 
+  shipping_address: string; 
+  total_amount: number;
+  payment_method: string; // Add this
+}): Promise<Order> {
+  const { data, error } = await supabase.rpc('place_order', {
+    p_shipping_address: orderData.shipping_address,
+    p_total_amount: orderData.total_amount,
+    p_payment_method: orderData.payment_method // Pass it here
+  });
 
   if (error) throw error;
-  return data as Order;
+  return await getOrder(data.id);
 }
 
 export async function getOrders(): Promise<OrderSummary[]> {
@@ -178,7 +186,18 @@ export async function getOrders(): Promise<OrderSummary[]> {
 export async function getOrder(orderId: string): Promise<Order> {
   const { data, error } = await supabase
     .from("orders")
-    .select("*")
+    .select(`
+      *,
+      order_items (
+        id,
+        quantity,
+        price,
+        product:products (
+          name,
+          image_url
+        )
+      )
+    `)
     .eq("id", orderId)
     .single();
 

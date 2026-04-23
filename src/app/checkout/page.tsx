@@ -6,7 +6,8 @@ import Image from "next/image";
 import Link from "next/link";
 import Breadcrumb from "@/components/common/Breadcrumbs";
 import { getCartItems, createOrder, type CartItem } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
+//import { getAccessToken } from "@/lib/auth";
 
 export default function CheckoutPage() {
   const router = useRouter();
@@ -30,9 +31,11 @@ export default function CheckoutPage() {
 
   useEffect(() => {
     const loadCart = async () => {
-      const token = getAccessToken();
+      // FIX: Check Supabase session instead of getAccessToken()
+      const { data: { session } } = await supabase.auth.getSession();
       
-      if (!token) {
+      if (!session) {
+        console.log("No session found, redirecting to login");
         router.push("/login");
         return;
       }
@@ -85,9 +88,9 @@ export default function CheckoutPage() {
       const shippingAddress = `${formData.streetAddress}${formData.apartment ? ', ' + formData.apartment : ''}, ${formData.city}`;
       
       const order = await createOrder({
-        shipping_address: shippingAddress,
-        payment_method: formData.paymentMethod === "bank" ? "credit_card" : "cash_on_delivery"
-      });
+  shipping_address: shippingAddress,
+  total_amount: subtotal, // Pass the calculated subtotal here
+});
 
       // Success! Clear state and redirect
       router.push(`/order-success?orderId=${order.id}`);
@@ -233,6 +236,7 @@ export default function CheckoutPage() {
                         alt={item.product?.name || "Product"} 
                         fill
                         className="object-contain" 
+                        unoptimized={process.env.NODE_ENV === 'development'}
                       />
                     </div>
                     <div>

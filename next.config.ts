@@ -11,11 +11,12 @@ const nextConfig: NextConfig = {
         pathname: '**',
       },
       // If you are using Supabase Storage for images later, add this too:
-      // {
-      //   protocol: 'https',
-      //   hostname: 'your-project-id.supabase.co',
-      //   pathname: '/storage/v1/object/public/**',
-      // },
+      {
+        protocol: 'http',
+        hostname: '192.168.100.127',
+        port: '54321',
+        pathname: '/storage/v1/object/public/**',
+      },
     ],
   },
 };

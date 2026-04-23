@@ -2,22 +2,26 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Package, Eye, X } from "lucide-react";
 import Breadcrumb from "@/components/common/Breadcrumbs";
 import { getOrders, cancelOrder, type OrderSummary } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth";
+// import { getAccessToken } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
 
 export default function OrdersPage() {
+  const router = useRouter();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadOrders = async () => {
-      const token = getAccessToken();
-      if (!token) {
-        setError("Please log in to view your orders");
-        setLoading(false);
+      // FIX: Use Supabase session check
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        router.push("/login"); // Redirect instead of just setting an error
         return;
       }
 
@@ -25,6 +29,7 @@ export default function OrdersPage() {
         const ordersData = await getOrders();
         setOrders(ordersData);
       } catch (err) {
+        console.error("Orders load error:", err);
         setError(err instanceof Error ? err.message : "Failed to load orders");
       } finally {
         setLoading(false);
@@ -32,16 +37,15 @@ export default function OrdersPage() {
     };
 
     loadOrders();
-  }, []);
+  }, [router]);
 
-  const handleCancelOrder = async (orderId: number) => {
+  const handleCancelOrder = async (orderId: string) => {
     if (!confirm("Are you sure you want to cancel this order?")) {
       return;
     }
 
     try {
       await cancelOrder(orderId);
-      // Update the order status in the local state
       setOrders(prev => 
         prev.map(order => 
           order.id === orderId 
