@@ -27,3 +27,32 @@ select cron.schedule(
   '0 0 * * *', 
   'select handle_daily_flash_sale()'
 );
+
+
+-- Using a 'jobs' table to simulate a queue
+CREATE TABLE public.job_queue (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  job_type text NOT NULL,
+  payload jsonb,
+  status text DEFAULT 'pending',
+  created_at timestamptz DEFAULT now()
+);
+
+-- Update the place_order RPC to add a job to the queue
+-- Add this line inside your place_order function:
+-- INSERT INTO public.job_queue (job_type, payload) VALUES ('check_inventory', json_build_object('order_id', v_order_id));
+
+-- Enable the extension
+create extension if not exists pg_cron;
+
+-- Schedule a task to run every day at midnight
+SELECT cron.schedule(
+  'cancel-abandoned-orders', -- name of the job
+  '0 0 * * *',               -- cron syntax (Midnight every day)
+  $$ 
+    UPDATE public.orders 
+    SET status = 'cancelled' 
+    WHERE status = 'pending' 
+    AND created_at < now() - interval '24 hours'
+  $$
+);

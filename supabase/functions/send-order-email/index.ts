@@ -1,85 +1,84 @@
-// Follow this setup guide to integrate the Deno language server with your editor:
-// https://deno.land/manual/getting_started/setup_your_environment
-// This enables autocomplete, go to definition, etc.
-
-// Setup type definitions for built-in Supabase Runtime APIs
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
-// Define the shape of the incoming webhook payload from Supabase
-interface WebhookPayload {
-  type: 'INSERT' | 'UPDATE' | 'DELETE';
-  table: string;
-  record: {
-    id: string;
-    user_id: string;
-    total_amount: number;
-    status: string;
-    shipping_address: string;
-  };
-  schema: string;
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
 serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+
   try {
-    // 1. Parse the request body sent by the Postgres Trigger
-    const payload: WebhookPayload = await req.json();
-    const { record, type } = payload;
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
 
-    console.log(`Function triggered for ${type} on table ${payload.table}`);
+    const { record } = await req.json()
+    const orderId = record.id
 
-    // 2. Logic: Only send email on NEW orders
-    if (type === 'INSERT') {
-      const orderId = record.id;
-      const total = record.total_amount;
+    // 1. Get Order and Items
+    const { data: order, error: orderError } = await supabaseClient
+      .from('orders')
+      .select('*, order_items(quantity, price, products(name))')
+      .eq('id', orderId)
+      .single()
 
-      console.log(`Processing Order #${orderId} for $${total}...`);
+    if (orderError || !order) throw new Error('Order not found')
 
-      // 3. Email Sending Logic
-      // In a real app, you'd use: fetch('https://api.resend.com/emails', { ... })
-      // For your demonstration, we simulate the 'Queue' processing:
-      const emailStatus = await simulateEmailSend(record);
-
-      return new Response(
-        JSON.stringify({ 
-          message: "Email queued and processed successfully", 
-          order_id: orderId,
-          status: emailStatus 
-        }),
-        { headers: { "Content-Type": "application/json" }, status: 200 }
-      );
+    // 2. Fetch Email directly from Supabase Auth via Admin API
+    // This bypasses the need for a public email column
+    const { data: { user }, error: authError } = await supabaseClient.auth.admin.getUserById(order.user_id)
+    
+    if (authError || !user?.email) {
+      throw new Error(`Auth lookup failed: ${authError?.message ?? 'No email found'}`)
     }
 
-    return new Response(JSON.stringify({ message: "Ignored non-insert event" }), { status: 200 });
+    const userEmail = user.email
+    console.log(`Sending confirmation to: ${userEmail}`)
+
+    // 3. Build Items List (same as Wasilisha style but for multiple items)
+    const itemsHtml = order.order_items.map((item: any) => 
+      `<li>${item.products?.name} (x${item.quantity}) - $${item.price}</li>`
+    ).join('')
+
+    // 4. Send via Resend
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${Deno.env.get('RESEND_API_KEY')}`,
+      },
+      body: JSON.stringify({
+        from: 'E-commerce Store <onboarding@resend.dev>',
+        to: [userEmail],
+        subject: `Order Confirmed! #${order.id.slice(0,8)}`,
+        html: `
+          <div style="font-family: sans-serif; padding: 20px;">
+            <h2>Order Confirmation</h2>
+            <p>Thank you for your order! We've received your payment of <strong>$${order.total_amount}</strong>.</p>
+            <div style="background: #f4f4f4; padding: 15px; border-radius: 10px;">
+              <p><strong>Items:</strong></p>
+              <ul>${itemsHtml}</ul>
+            </div>
+            <p>Shipping to: ${order.shipping_address}</p>
+          </div>
+        `,
+      }),
+    })
+
+    const result = await res.json()
+    return new Response(JSON.stringify(result), { 
+      status: 200, 
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    })
 
   } catch (error) {
-    console.error("Error processing webhook:", error.message);
+    console.error("Function Error:", error.message)
     return new Response(JSON.stringify({ error: error.message }), { 
-      headers: { "Content-Type": "application/json" }, 
-      status: 400 
-    });
+      status: 400, 
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    })
   }
 })
-
-// Mock function to demonstrate asynchronous processing
-async function simulateEmailSend(order: any) {
-  // Simulate network latency
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  const logMsg = `[EMAIL SENT] To User: ${order.user_id} | Subject: Order Confirmation #${order.id} | Total: $${order.total_amount}`;
-  console.log(logMsg);
-  
-  return "Sent";
-}
-
-/* To invoke locally:
-
-  1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
-  2. Make an HTTP request:
-
-  curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/send-order-email' \
-    --header 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0' \
-    --header 'Content-Type: application/json' \
-    --data '{"name":"Functions"}'
-
-*/
