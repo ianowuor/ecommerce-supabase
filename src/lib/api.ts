@@ -116,12 +116,12 @@ export async function getCartItems() {
       user_id,
       quantity,
       product_id,
-      product:products (*)
+      product:products!inner (*)
     `)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data as CartItem[];
+  return (data as unknown) as CartItem[];
 }
 
 export async function addToCart(productId: string, quantity: number = 1) {
@@ -158,19 +158,49 @@ export async function addToCart(productId: string, quantity: number = 1) {
 /**
  * ORDER FUNCTIONS
  */
+// export async function createOrder(orderData: { 
+//   shipping_address: string; 
+//   total_amount: number;
+//   payment_method: string; 
+// }): Promise<Order> {
+//   const { data, error } = await supabase.rpc('place_order', {
+//     // These keys must match the parameter names in your SQL function exactly
+//     p_shipping_address: orderData.shipping_address,
+//     p_total_amount: orderData.total_amount,
+//     p_payment_method: orderData.payment_method
+//   });
+
+//   if (error) {
+//     console.error("Supabase RPC Error:", error);
+//     throw new Error(error.message || "Failed to place order");
+//   }
+
+//   // Ensure data exists before trying to fetch the order
+//   if (!data || !data.id) {
+//     throw new Error("Order creation failed: No ID returned");
+//   }
+
+//   return await getOrder(data.id);
+// }
 export async function createOrder(orderData: { 
   shipping_address: string; 
   total_amount: number;
-  payment_method: string; // Add this
+  payment_method: string; 
 }): Promise<Order> {
   const { data, error } = await supabase.rpc('place_order', {
     p_shipping_address: orderData.shipping_address,
     p_total_amount: orderData.total_amount,
-    p_payment_method: orderData.payment_method // Pass it here
+    p_payment_method: orderData.payment_method
   });
 
-  if (error) throw error;
-  return await getOrder(data.id);
+  if (error) {
+    console.error("Supabase RPC Error:", error);
+    throw new Error(error.message || "Failed to place order");
+  }
+
+  // data here is the return value of your SQL function 'place_order'
+  // Since your SQL function returns 'public.orders', 'data' IS the order!
+  return data as Order; 
 }
 
 export async function getOrders(): Promise<OrderSummary[]> {
@@ -202,7 +232,9 @@ export async function getOrder(orderId: string): Promise<Order> {
     .single();
 
   if (error) throw error;
-  return data as Order;
+  
+  // Using 'as unknown as Order' handles the nested array-to-object mapping issues
+  return (data as unknown) as Order;
 }
 
 export async function cancelOrder(orderId: string): Promise<void> {

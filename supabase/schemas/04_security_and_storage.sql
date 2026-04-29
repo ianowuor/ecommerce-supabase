@@ -1,6 +1,8 @@
 -- 1. EXTENSIONS (Required for Storage to function properly)
 create extension if not exists "uuid-ossp";
 
+SET search_path = public, storage;
+
 -- 2. BUCKET CREATION
 -- We use a DO block to ensure the bucket is created if it doesn't exist
 -- This is the "mechanical" way to ensure Supabase recognizes the bucket
@@ -29,6 +31,10 @@ create policy "Users can delete their own cart" on public.cart_items for delete 
 
 create policy "Users can view their own order items" on public.order_items for select 
 using (exists (select 1 from public.orders where orders.id = order_items.order_id and orders.user_id = auth.uid()));
+
+CREATE POLICY "Users can view their own orders" 
+ON public.orders FOR SELECT 
+USING (auth.uid() = user_id);
 
 -- 5. STORAGE POLICIES
 -- Drop existing to avoid conflicts during reorganization

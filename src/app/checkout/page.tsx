@@ -85,15 +85,15 @@ export default function CheckoutPage() {
     setError(null);
 
     try {
-      const shippingAddress = `${formData.streetAddress}${formData.apartment ? ', ' + formData.apartment : ''}, ${formData.city}`;
-      
-      const order = await createOrder({
-  shipping_address: shippingAddress,
-  total_amount: subtotal, // Pass the calculated subtotal here
-});
+    const shippingAddress = `${formData.streetAddress}${formData.apartment ? ', ' + formData.apartment : ''}, ${formData.city}`;
+    
+    const order = await createOrder({
+      shipping_address: shippingAddress,
+      total_amount: subtotal,
+      payment_method: formData.paymentMethod, // Add this line!
+    });
 
-      // Success! Clear state and redirect
-      router.push(`/order-success?orderId=${order.id}`);
+    router.push(`/order-success?orderId=${order.id}`);
     } catch (err) {
       console.error("Checkout error:", err);
       if (err instanceof Error) {

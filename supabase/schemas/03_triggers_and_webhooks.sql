@@ -29,3 +29,9 @@ $$ language plpgsql;
 create trigger on_order_created
   after insert on public.orders
   for each row execute function public.handle_order_email();
+
+
+-- Trigger to invoke the profile creation after a successful signup
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();

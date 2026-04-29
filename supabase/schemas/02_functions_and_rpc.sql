@@ -46,3 +46,20 @@ begin
   where id in (select id from public.products order by random() limit 3);
 end;
 $$ language plpgsql;
+
+-- This function creates a public profile automatically on signup
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.users (id, full_name, avatar_url)
+  values (
+    new.id, 
+    coalesce(new.raw_user_meta_data->>'full_name', new.email), -- Fallback to email if name is missing
+    new.raw_user_meta_data->>'avatar_url'
+  );
+  return new;
+end;
+$$;
